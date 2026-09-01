@@ -136,6 +136,67 @@ Nothing here touches op-node: its P2P is gossip plus a req/resp *server*, and th
 req/resp sync client was removed upstream, so op-node is not on the catch-up
 download path at all.
 
+### Why not in the kernel, the way upload is
+
+Fair question, and the answer is not "it was impossible". The kernel *can* limit
+ingress — either `tc` policing on the ingress qdisc, or the cleaner form, an `ifb`
+device fed by `mirred` with a real shaper on it:
+
+```bash
+ip link add ifb0 type ifb && ip link set ifb0 up
+tc qdisc add dev eth0 handle ffff: ingress
+tc filter add dev eth0 parent ffff: u32 match u32 0 0 \
+    action mirred egress redirect dev ifb0
+tc qdisc add dev ifb0 root tbf rate 50mbit burst 256kbit latency 50ms
+```
+
+If the goal were only "keep total ingress under N Mbit/s", that is the whole job:
+no vendored crate, no `[patch]`, nothing to re-apply on a tag bump. Three things
+make the kernel the wrong tool for *this* limit, and the first is decisive.
+
+**1. Throttling ingress in the kernel makes us drop honest peers.** reth puts a
+deadline on every in-flight request, and `reth-network`'s `session/active.rs` is
+explicit about what happens when one is missed:
+
+> If a request misses the `protocol_breach_request_timeout` then this session is
+> considered in protocol violation and will close.
+
+A kernel shaper works by slowing responses *that we already asked for*, so it
+walks straight into that timer: the tighter the cap, the more of our own requests
+time out and the more good peers we terminate. The in-client limiter instead
+reduces how many requests we *issue*, so there is nothing in flight to time out.
+
+This is the exact mirror of the upload case. Throttle serving in the client and
+**the peer drops us**; throttle downloading in the kernel and **we drop the
+peer**. Each direction has one side of the connection that can afford to wait,
+and it is not the same side.
+
+**2. A port filter cannot separate backfill from gossip.** devp2p multiplexes
+every capability over a single RLPx connection per peer, so header and body
+responses share one TCP session with transaction gossip, and discovery shares the
+port. `tc` classifies by address and port, which means shaping devp2p at all
+means shaping all of it — including the tx gossip a sequencer-adjacent node needs
+promptly. The in-client limiter sits on the pipeline's downloader specifically.
+
+**3. It needs privileges the deployment may not grant.** `tc` wants root or
+`CAP_NET_ADMIN`, and inside the right network namespace. Many Kubernetes setups
+will not give a node pod either. A CLI flag is configured per node, shows up in
+the node's own logs, and needs no host access.
+
+The two directions, side by side:
+
+|                                | Download                                                          | Upload                            |
+| ------------------------------ | ----------------------------------------------------------------- | --------------------------------- |
+| Kernel can do it?              | Yes — ingress policing or `ifb`                                   | Yes, and it is `tc`'s native job  |
+| Cost of doing it in the kernel | We time out and drop peers; no selectivity; needs `CAP_NET_ADMIN` | None worth noting                 |
+| Cost of doing it in the client | None — fewer requests, nothing to time out                        | Peers drop us; 24,230-line vendor |
+| Which direction is billed      | Ingress, i.e. free                                                | Egress, i.e. billed               |
+| What this fork does            | In-client flag                                                    | `tc` on the host                  |
+
+Worth being blunt about the trade: what the vendoring below buys is points 1-3,
+not the cap itself. A deployment that only needs a coarse ceiling on total
+ingress, and can spare the peers, does not need any of it.
+
 ### How it is wired in
 
 The limiter itself is a fork-owned crate,
@@ -319,8 +380,10 @@ direct multiplier on gossip egress, but it also weakens the mesh.
 
 ### Why not in the client
 
-Beyond the maintenance cost, there is a correctness trap. **Delaying a response
-gets us punished.** The requesting peer times out on an RTT-derived deadline and
+Beyond the maintenance cost, there is a correctness trap — the mirror of the one
+that kept the download limiter out of the kernel (see
+[Why not in the kernel, the way upload is](#why-not-in-the-kernel-the-way-upload-is)).
+**Delaying a response gets us punished.** The requesting peer times out on an RTT-derived deadline and
 then drops or penalises us, so a byte-rate limiter that works by stalling
 responses ends up shrinking our peer set — the opposite of a graceful cap.
 
