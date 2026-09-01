@@ -43,14 +43,14 @@ files can be missing entirely on another tag (`.githooks/` did not exist at
 What the stack currently touches outside those directories, and why each one has
 to be there:
 
-| File | Why |
-| ---- | --- |
-| `AGENTS.md` | The fork notice at the top; `CLAUDE.md` symlinks to it. Agents must see the policy before touching git. |
-| `rust/Cargo.toml` | Workspace members, the dependency entries the vendored crates' manifests expect, and the two `[patch]` entries (rate limiter, musl fix). |
-| `rust/rustfmt.toml` | `ignore = ["ralim/vendor"]`, so our formatter leaves the vendored upstream crates byte-identical. |
-| `rust/op-reth/crates/node/src/args.rs` | The `--rollup.download-rate-limit-mbps` flag on `RollupArgs`, which is where op-reth's CLI is defined. |
-| `rust/op-reth/crates/node/src/proof_history.rs` | Installs the limiter in `launch_node`, before the node builds its pipeline. |
-| `rust/op-reth/crates/node/Cargo.toml` | The dependency for the two files above. |
+| File                                            | Why                                                                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENTS.md`                                     | The fork notice at the top; `CLAUDE.md` symlinks to it. Agents must see the policy before touching git.                                  |
+| `rust/Cargo.toml`                               | Workspace members, the dependency entries the vendored crates' manifests expect, and the two `[patch]` entries (rate limiter, musl fix). |
+| `rust/rustfmt.toml`                             | `ignore = ["ralim/vendor"]`, so our formatter leaves the vendored upstream crates byte-identical.                                        |
+| `rust/op-reth/crates/node/src/args.rs`          | The `--rollup.download-rate-limit-mbps` flag on `RollupArgs`, which is where op-reth's CLI is defined.                                   |
+| `rust/op-reth/crates/node/src/proof_history.rs` | Installs the limiter in `launch_node`, before the node builds its pipeline.                                                              |
+| `rust/op-reth/crates/node/Cargo.toml`           | The dependency for the two files above.                                                                                                  |
 
 ## Moving to a new tag
 
@@ -112,17 +112,20 @@ Details worth knowing before you set it:
   response is never bigger than the bucket.
 - **It throttles catch-up itself.** A node that is behind stays behind longer.
   This is a knob for bounding bandwidth cost, not for syncing faster.
+- **It does not reduce a cloud bill.** Download is ingress, and ingress is free
+  on the major clouds. The billed direction is upload — see
+  [Upload (egress) limiting](#upload-egress-limiting--do-it-in-the-kernel).
 
 ### What it does and does not cover
 
 reth hands one `FetchClient` to two consumers
 (`reth-node-builder`'s `launch/engine.rs`):
 
-| Consumer | Used when | Limited? |
-| -------- | --------- | -------- |
-| Staged pipeline (`reth-downloaders`) | Backfill — the node is far enough behind to run the pipeline | **Yes** |
-| Engine block downloader | Live sync filling a small gap | No |
-| Transaction gossip | Always | No |
+| Consumer                             | Used when                                                    | Limited? |
+| ------------------------------------ | ------------------------------------------------------------ | -------- |
+| Staged pipeline (`reth-downloaders`) | Backfill — the node is far enough behind to run the pipeline | **Yes**  |
+| Engine block downloader              | Live sync filling a small gap                                | No       |
+| Transaction gossip                   | Always                                                       | No       |
 
 So this covers the case it was built for — a backlogged chain catching up — and
 not the engine's live gap fills. Covering those too means wrapping the client in
@@ -193,6 +196,159 @@ For the same reason a vendored crate is linted by *our* `[workspace.lints]`, whi
 are stricter than reth's: `reth-db` trips `unnameable-types`. It is `warn`, so it
 does not fail a build, but it would fail a `-D warnings` run.
 
+## Upload (egress) limiting — do it in the kernel
+
+**Recommendation: shape egress with `tc` on the host, not in op-reth or op-node.**
+The reasons are below, but the short version is that the kernel gets this right
+for a one-line command and the client-side version costs a 24,000-line vendored
+crate plus a standing risk of peers penalising us.
+
+### Why this is the side that costs money
+
+Cloud bandwidth pricing is asymmetric: **ingress is free, egress is billed.** The
+download limiter bounds saturation and lets a node be a polite neighbour, but it
+does not move the invoice. What the node *serves* does.
+
+And the exposure is real: a single peer running a full backfill against us pulls
+tens of gigabytes, and nothing rate-limits it.
+
+### Nothing in the stack limits upload today
+
+| Path                       | What bounds it                    | Rate limited?         |
+| -------------------------- | --------------------------------- | --------------------- |
+| op-reth request serving    | 2 MiB and 1024 items per response | **No**                |
+| op-reth transaction gossip | per-message soft size limits      | No                    |
+| op-node req/resp server    | 20 req/s global, 4 req/s per peer | By request count only |
+| op-node gossip forwarding  | mesh degree `D` (default 8)       | No                    |
+
+The op-reth serving path is `reth-network`'s `eth_requests.rs`: it caps each
+*response* (`SOFT_RESPONSE_LIMIT` = 2 MiB, `MAX_HEADERS/BODIES/RECEIPTS_SERVE` =
+1024) and nothing else. There is no cap on requests per second, so a peer issuing
+them back to back pulls data at whatever rate the link allows.
+
+op-node is better off: its payload server does hold token buckets
+([op-node/p2p/sync.go:40-46](../op-node/p2p/sync.go#L40-L46)), but they count
+*requests*, never bytes, and the values are hardcoded with no CLI. Its gossip
+forwarding multiplies every block it receives by the mesh degree
+([op-node/p2p/gossip.go:42](../op-node/p2p/gossip.go#L42)) — modest per block, but
+it is pure egress.
+
+### The kernel is the right place
+
+Three reasons it beats an application-level limiter, in order of importance:
+
+1. **It shapes the bytes you are billed for.** `tc` works on real wire bytes —
+   after RLPx's snappy compression, including TCP/IP overhead. An in-client
+   limiter counts RLP bytes before compression, so it can never agree with the
+   invoice. (Our download limiter has exactly this imprecision.)
+2. **It covers *all* egress, not just P2P.** RPC responses, metrics scrapes, log
+   shipping. The bill does not care which socket the bytes left through.
+3. **It costs nothing to maintain.** No vendored crate, no `[patch]`, nothing to
+   re-apply on a tag bump, no risk of a silent regression.
+
+#### Whole interface, simplest form
+
+```bash
+# Cap all egress on eth0 at 50 Mbit/s
+sudo tc qdisc add dev eth0 root tbf rate 50mbit burst 256kbit latency 50ms
+
+sudo tc -s qdisc show dev eth0   # verify; watch the "dropped"/"backlog" counters
+sudo tc qdisc del dev eth0 root  # undo
+```
+
+`burst` must be at least `rate / HZ`, or the shaper never reaches the target rate
+— 256 kbit is comfortable at 50 Mbit/s. Note this also shapes SSH and RPC on that
+interface; if you need to stay reachable under load, use the port-scoped form.
+
+#### Port-scoped, so only P2P is shaped
+
+Leaves SSH, RPC, and metrics at line rate. Ports are the defaults: op-reth devp2p
+on 30303 (TCP and UDP), op-node libp2p on 9222.
+
+```bash
+IF=eth0
+sudo tc qdisc add dev $IF root handle 1: htb default 10
+sudo tc class add dev $IF parent 1:  classid 1:1  htb rate 1000mbit
+sudo tc class add dev $IF parent 1:1 classid 1:10 htb rate 1000mbit ceil 1000mbit  # everything else
+sudo tc class add dev $IF parent 1:1 classid 1:20 htb rate 50mbit   ceil 50mbit    # P2P
+
+for port in 30303 9222; do
+  sudo tc filter add dev $IF protocol ip parent 1:0 prio 1 u32 \
+      match ip sport "$port" 0xffff flowid 1:20
+done
+```
+
+Set the `1000mbit` figures to the link's actual speed — HTB borrows against the
+parent class, so a root rate below the real capacity throttles everything, and one
+far above it makes the classes meaningless. `default 10` is what unclassified
+traffic falls into.
+
+`match ip sport` reads the source-port field, which sits at the same offset for
+TCP and UDP, so one rule covers devp2p's TCP sessions and discovery's UDP
+datagrams. IPv6 needs its own rules (`protocol ipv6 … match ip6 sport`).
+
+#### Operational notes
+
+- **Not persistent.** `tc` state is lost on reboot — put it in a systemd unit
+  (`ExecStart=/sbin/tc …`, `Type=oneshot`, `RemainAfterExit=yes`) or your network
+  configuration.
+- **Containers have their own netns.** If the node runs in Docker, apply this
+  inside the container's namespace or on its `veth` on the host, not on the host
+  bridge.
+- **Egress only.** That is what we want; ingress shaping would need an `ifb`
+  device and policing, and ingress is the free direction anyway.
+- **Measure at the source of truth** — `tc -s qdisc show` plus the cloud's own
+  egress metric. Client-side counters will not match.
+
+### Knobs you already have, no code required
+
+Worth setting alongside the shaper, because they bound *who* can pull from you
+rather than how fast:
+
+| Knob                                | Default | What it does                            |
+| ----------------------------------- | ------- | --------------------------------------- |
+| op-reth `--max-inbound-peers N`     | 30      | How many peers may request data from us |
+| op-node `--p2p.sync.req-resp=false` | on      | Turns off the CL payload server         |
+| op-node `--p2p.peers.hi` / `.lo`    | 30 / 20 | Same idea on the CL side                |
+| op-node `--p2p.gossip.mesh.d`       | 8       | Peers each received block is sent on to |
+
+`--max-inbound-peers` is the bluntest and most effective of the four. Turning off
+the CL payload server costs nothing in the long run — upstream plans to remove it
+in favour of EL P2P sync. Lower the gossip mesh degree only deliberately: it is a
+direct multiplier on gossip egress, but it also weakens the mesh.
+
+### Why not in the client
+
+Beyond the maintenance cost, there is a correctness trap. **Delaying a response
+gets us punished.** The requesting peer times out on an RTT-derived deadline and
+then drops or penalises us, so a byte-rate limiter that works by stalling
+responses ends up shrinking our peer set — the opposite of a graceful cap.
+
+The protocol-correct way to shed load is to **serve fewer items**: `eth/68`
+permits partial responses, and reth already truncates by `SOFT_RESPONSE_LIMIT`. So
+an in-client upload limiter would lower that limit dynamically as the budget
+drains, rather than adding sleeps like the download side does.
+
+If it is ever built anyway, the price is known:
+
+|                    | Download (built)      | Upload                      |
+| ------------------ | --------------------- | --------------------------- |
+| Crate to vendor    | `reth-downloaders`    | `reth-network`              |
+| Its size           | 5,383 lines           | **24,230 lines**            |
+| New workspace deps | 3                     | **8**                       |
+| Patch stability    | two builder callsites | reth's network stack churns |
+
+The eight are `reth-discv4`, `reth-discv5`, `reth-dns-discovery`, `reth-ecies`,
+`reth-net-banlist`, `reth-network-types`, `reth-tokio-util` and `socket2`. The
+serving code cannot be split out of `reth-network`, so there is no smaller
+vendoring target.
+
+There is a much cheaper middle step if the goal is protecting the node rather
+than the bill: **expose op-node's existing serve-side token buckets as CLI
+flags.** They already exist and are already correct — the values are just
+hardcoded ([op-node/p2p/sync.go:40-46](../op-node/p2p/sync.go#L40-L46)). That is
+in-tree Go, no vendoring, no `[patch]`, and it bounds CL upload by request rate.
+
 ## Syncing the mirror
 
 ```bash
@@ -244,10 +400,10 @@ Upstream reth does not support musl targets, and `main` still does not, so no ta
 bump fixes any of this. Each break is a place where reth writes a `libc` type as
 though glibc's definition were the only one:
 
-| Crate | What it assumes | The fix |
-| ----- | --------------- | ------- |
-| `reth-tasks` | `libc::sched_param` has one field. glibc's does; musl's also carries the POSIX sporadic-server fields (`sched_ss_low_priority` and friends), so the literal does not compile. | Zero the struct, which is what glibc's one-field literal amounted to. |
-| `reth-db` | `statfs::f_type` is `i64`, so the ZFS magic number is an `i64` constant. On musl the field is `c_ulong` (u64) and the comparison does not typecheck. | Let the constant follow the platform's field type under `cfg(target_env = "musl")`. Casting would be a sign change on one platform or an `unnecessary_cast` lint on the other. |
+| Crate        | What it assumes                                                                                                                                                               | The fix                                                                                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `reth-tasks` | `libc::sched_param` has one field. glibc's does; musl's also carries the POSIX sporadic-server fields (`sched_ss_low_priority` and friends), so the literal does not compile. | Zero the struct, which is what glibc's one-field literal amounted to.                                                                                                          |
+| `reth-db`    | `statfs::f_type` is `i64`, so the ZFS magic number is an `i64` constant. On musl the field is `c_ulong` (u64) and the comparison does not typecheck.                          | Let the constant follow the platform's field type under `cfg(target_env = "musl")`. Casting would be a sign change on one platform or an `unnecessary_cast` lint on the other. |
 
 Both are one-expression changes, and both are the price of
 [static builds](STATIC-BUILD.md): they have to be re-vendored on every reth pin
