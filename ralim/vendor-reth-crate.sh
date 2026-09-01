@@ -25,10 +25,11 @@ crate_subdir() {
 	case "$1" in
 	reth-downloaders) echo crates/net/downloaders ;;
 	reth-tasks) echo crates/tasks ;;
+	reth-db) echo crates/storage/db ;;
 	*) return 1 ;;
 	esac
 }
-CRATES="reth-downloaders reth-tasks"
+CRATES="reth-downloaders reth-tasks reth-db"
 
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }

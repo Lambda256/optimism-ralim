@@ -73,6 +73,7 @@ members = [
   "ralim/p2p-ratelimit/",
   "ralim/vendor/reth-downloaders/",
   "ralim/vendor/reth-tasks/",
+  "ralim/vendor/reth-db/",
 ]
 default-members = [
   "kona/bin/host",
@@ -385,8 +386,12 @@ reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0", default-features = false }
+# ralim: required by the vendored reth-db
+reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-config = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+# ralim: required by the vendored reth-db
+reth-nippy-jar = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
@@ -592,6 +597,8 @@ pprof = "0.15.0"
 proptest = "1.10.0"
 proptest-derive = "0.7"
 proptest-arbitrary-interop = "0.1.0"
+# ralim: required by the vendored reth-db
+quanta = "0.12"
 rstest = "0.26.1"
 similar-asserts = { version = "1.7.0", features = ["serde"] }
 tempfile = "3.24.0"
@@ -702,6 +709,8 @@ spin = "0.10.0"
 strum = { version = "0.27", default-features = false }
 strum_macros = "0.27"
 syn = "2.0"
+# ralim: required by the vendored reth-db
+sysinfo = { version = "0.38", default-features = false }
 tabled = { version = "0.20.0", default-features = false }
 tar = "0.4.44"
 thiserror = { version = "2.0.18", default-features = false }
@@ -735,3 +744,5 @@ reth-downloaders = { path = "ralim/vendor/reth-downloaders" }
 # reth-tasks: one initializer that upstream writes glibc-only, which blocks every
 # musl target. See ralim/STATIC-BUILD.md.
 reth-tasks = { path = "ralim/vendor/reth-tasks" }
+# reth-db: a `statfs::f_type` comparison that only typechecks against glibc.
+reth-db = { path = "ralim/vendor/reth-db" }

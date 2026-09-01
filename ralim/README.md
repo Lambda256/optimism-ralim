@@ -171,10 +171,11 @@ Every vendored copy must match the reth version the rest of the workspace builds
 against — `./ralim/vendor-reth-crate.sh --list` names them:
 
 ```bash
-./ralim/vendor-reth-crate.sh reth-downloaders   # re-vendor from the new pin, re-apply the patch
-./ralim/vendor-reth-crate.sh reth-tasks
+for crate in $(./ralim/vendor-reth-crate.sh --list); do
+  ./ralim/vendor-reth-crate.sh "$crate"   # re-vendor from the new pin, re-apply the patch
+done
 ./ralim/check-patches.sh
-cd rust && cargo check -p reth-downloaders -p reth-tasks -p reth-optimism-node
+cd rust && cargo check -p reth-downloaders -p reth-tasks -p reth-db -p reth-optimism-node
 ```
 
 The script reads the pin (URL plus tag or rev) straight out of `rust/Cargo.toml`,
@@ -187,6 +188,10 @@ inherits `.workspace = true` from *reth's* workspace, not ours, so a feature ret
 enables and we do not shows up as a compile error in the vendored copy rather
 than a patch rejection. `reth-tasks` needed `tracing = { workspace = true,
 features = ["attributes"] }` for exactly this reason.
+
+For the same reason a vendored crate is linted by *our* `[workspace.lints]`, which
+are stricter than reth's: `reth-db` trips `unnameable-types`. It is `warn`, so it
+does not fail a build, but it would fail a `-D warnings` run.
 
 ## Syncing the mirror
 
@@ -233,18 +238,25 @@ parent through the web UI, and only GitHub Support can detach a fork from its
 parent. Treat the layers above as guardrails against accident, and the policy in
 this file as the actual rule.
 
-## The musl fix in `rust/ralim/vendor/reth-tasks`
+## The musl fixes in `rust/ralim/vendor/`
 
-Upstream reth does not support musl targets. `reth-tasks` initializes
-`libc::sched_param` with only `sched_priority`, which is glibc's whole struct but
-not musl's — musl also carries the POSIX sporadic-server fields, so the literal
-fails to compile and takes every musl build of op-reth down with it. Upstream
-`main` still has it, so no tag bump fixes this.
+Upstream reth does not support musl targets, and `main` still does not, so no tag
+bump fixes any of this. Each break is a place where reth writes a `libc` type as
+though glibc's definition were the only one:
 
-The vendored copy zeroes the struct instead, which is what glibc's one-field
-literal amounted to. That is the entire change; it is the price of
-[static builds](STATIC-BUILD.md), and it has to be re-vendored on every reth pin
-move like the rate limiter does.
+| Crate | What it assumes | The fix |
+| ----- | --------------- | ------- |
+| `reth-tasks` | `libc::sched_param` has one field. glibc's does; musl's also carries the POSIX sporadic-server fields (`sched_ss_low_priority` and friends), so the literal does not compile. | Zero the struct, which is what glibc's one-field literal amounted to. |
+| `reth-db` | `statfs::f_type` is `i64`, so the ZFS magic number is an `i64` constant. On musl the field is `c_ulong` (u64) and the comparison does not typecheck. | Let the constant follow the platform's field type under `cfg(target_env = "musl")`. Casting would be a sign change on one platform or an `unnecessary_cast` lint on the other. |
+
+Both are one-expression changes, and both are the price of
+[static builds](STATIC-BUILD.md): they have to be re-vendored on every reth pin
+move, like the rate limiter does.
+
+There is no reliable way to grep for the next one — these are not a single
+syntactic pattern but "any use of a libc type whose width or signedness differs
+between the two libcs". `./ralim/build-static-opreth.sh --check` is what finds
+them, in minutes rather than at the end of a full build.
 
 ## Static `op-reth` builds
 

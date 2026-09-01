@@ -1,0 +1,40 @@
+diff -ruN --exclude=target a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,16 @@
++# VENDORED — do not edit by hand beyond the `ralim:` marked lines.
++#
++# A copy of reth-db from the base tag's pinned reth (see rust/Cargo.toml),
++# carrying one change: the ZFS `statfs::f_type` comparison builds on musl as well
++# as glibc, so this fork can produce a static binary. Upstream reth does not
++# support musl targets. Wired in by the `[patch]` section of rust/Cargo.toml.
++# Re-vendor on a reth bump with ./ralim/vendor-reth-crate.sh reth-db — see
++# ralim/README.md.
++
+ [package]
+ name = "reth-db"
+-version.workspace = true
++# Must equal the upstream crate version, or `[patch]` in rust/Cargo.toml is rejected.
++version = "2.3.0"
+ edition.workspace = true
+ rust-version.workspace = true
+ license.workspace = true
+diff -ruN --exclude=target a/src/mdbx.rs b/src/mdbx.rs
+--- a/src/mdbx.rs
++++ b/src/mdbx.rs
+@@ -32,7 +32,15 @@
+ fn is_zfs(path: &Path) -> std::io::Result<bool> {
+     use std::{ffi::CString, os::unix::ffi::OsStrExt};
+ 
++    // ralim: `statfs::f_type` is `__fsword_t` (i64) on glibc but `c_ulong` (u64) on
++    // musl, so the magic number follows the platform's field type rather than being
++    // fixed at i64. Casting instead would be either a sign change or an
++    // unnecessary-cast lint on one of the two platforms.
+     /// ZFS filesystem magic number.
++    #[cfg(target_env = "musl")]
++    const ZFS_SUPER_MAGIC: libc::c_ulong = 0x2fc12fc1;
++    /// ZFS filesystem magic number.
++    #[cfg(not(target_env = "musl"))]
+     const ZFS_SUPER_MAGIC: i64 = 0x2fc12fc1;
+ 
+     let c_path = CString::new(path.as_os_str().as_bytes())

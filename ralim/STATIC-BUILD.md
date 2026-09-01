@@ -73,33 +73,36 @@ One thing op-reth does *not* drag in, which helps: no OpenSSL. Nothing in
 `op-reth`'s crate graph depends on `openssl-sys`, so there is no vendored-OpenSSL
 step to fight.
 
-## The source patch this needs
+## The source patches this needs
 
 Getting the toolchain right is not sufficient: **upstream reth does not compile
-for musl.** `reth-tasks` initializes `libc::sched_param` with only
-`sched_priority`, which is glibc's entire struct but not musl's — musl also
-carries the POSIX sporadic-server fields — so the build dies with:
+for musl**, and `main` still does not, so no base-tag bump fixes it. Two crates
+break so far, each writing a `libc` type as though glibc's definition were the
+only one:
 
 ```
 error[E0063]: missing fields `sched_ss_init_budget`, `sched_ss_low_priority`,
 `sched_ss_max_repl` and 1 other field in initializer of `sched_param`
-  --> .../reth/crates/tasks/src/utils.rs:92:25
+  --> .../reth/crates/tasks/src/utils.rs:92:25          (reth-tasks)
+
+error[E0308]: mismatched types: expected `u64`, found `i64`
+  --> .../reth/crates/storage/db/src/mdbx.rs:44:31      (reth-db)
 ```
 
-Upstream `main` still has this, so no base-tag bump fixes it. The fork therefore
-vendors `reth-tasks` alongside `reth-downloaders` and zeroes the struct instead,
-which is what glibc's one-field literal amounted to; see
-[README](README.md#the-musl-fix-in-rustralimvendorreth-tasks). That copy has to
-be re-vendored on every reth pin move, which is the recurring cost of static
-builds here.
+The fork vendors both alongside `reth-downloaders` and carries a one-expression
+fix in each; see [README](README.md#the-musl-fixes-in-rustralimvendor) for what
+each one changes. Those copies have to be re-vendored on every reth pin move,
+which is the recurring cost of static builds here.
 
-`libc::` struct literals are the pattern to watch for — a sweep of reth's
-`crates/` finds exactly one, and none in op-reth's own crates, so this is
-plausibly the only such patch needed. If a new one turns up, `--check` finds it
-in minutes instead of at the end of a full build:
+Expect more. There is no reliable way to grep for the next one: it is not a single
+syntactic pattern but "any use of a libc type whose width or signedness differs
+between the two libcs" — the `reth-db` break is a field comparison, not a struct
+literal, so a sweep for struct literals misses it entirely. What does work is
+checking before committing to a full build:
 
 ```bash
-./ralim/build-static-opreth.sh --check
+./ralim/build-static-opreth.sh --check     # cargo check for the musl target, minutes
+./ralim/build-static-opreth.sh             # once it is clean
 ```
 
 ## What the script does

@@ -11675,25 +11675,32 @@ dependencies = [
 [[package]]
 name = "reth-db"
 version = "2.3.0"
-source = "git+https://github.com/paradigmxyz/reth?tag=v2.3.0#9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
 dependencies = [
+ "alloy-consensus 2.0.5",
  "alloy-primitives",
+ "arbitrary",
+ "assert_matches",
  "derive_more 2.1.1",
  "eyre",
  "libc",
  "metrics",
  "page_size",
  "parking_lot",
+ "proptest",
  "quanta",
  "reth-db-api",
  "reth-fs-util",
  "reth-libmdbx",
  "reth-metrics",
  "reth-nippy-jar",
+ "reth-primitives-traits",
+ "reth-prune-types",
  "reth-static-file-types",
  "reth-storage-errors",
  "reth-tracing",
  "rustc-hash",
+ "serde",
+ "serde_json",
  "strum",
  "sysinfo 0.38.4",
  "tempfile",
