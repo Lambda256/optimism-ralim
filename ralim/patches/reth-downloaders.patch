@@ -1,6 +1,6 @@
-diff -ruN --exclude=target pristine/Cargo.toml /Users/jimmy/git/optimism-ralim/rust/ralim/vendor/reth-downloaders/Cargo.toml
---- a/Cargo.toml	2026-09-01 17:47:59
-+++ b/Cargo.toml	2026-09-01 17:36:17
+diff -ruN --exclude=target a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
 @@ -1,6 +1,15 @@
 +# VENDORED — do not edit by hand beyond the `ralim:` marked lines.
 +#
@@ -32,7 +32,7 @@ diff -ruN --exclude=target pristine/Cargo.toml /Users/jimmy/git/optimism-ralim/r
  # reth
  reth-config.workspace = true
  reth-consensus.workspace = true
-diff -ruN --exclude=target pristine/src/bodies/bodies.rs /Users/jimmy/git/optimism-ralim/rust/ralim/vendor/reth-downloaders/src/bodies/bodies.rs
+diff -ruN --exclude=target a/src/bodies/bodies.rs b/src/bodies/bodies.rs
 --- a/src/bodies/bodies.rs
 +++ b/src/bodies/bodies.rs
 @@ -1,4 +1,5 @@
@@ -60,7 +60,7 @@ diff -ruN --exclude=target pristine/src/bodies/bodies.rs /Users/jimmy/git/optimi
              consensus,
              provider,
              request_limit,
-diff -ruN --exclude=target pristine/src/headers/reverse_headers.rs /Users/jimmy/git/optimism-ralim/rust/ralim/vendor/reth-downloaders/src/headers/reverse_headers.rs
+diff -ruN --exclude=target a/src/headers/reverse_headers.rs b/src/headers/reverse_headers.rs
 --- a/src/headers/reverse_headers.rs
 +++ b/src/headers/reverse_headers.rs
 @@ -1,5 +1,6 @@

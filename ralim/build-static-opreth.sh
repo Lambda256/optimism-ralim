@@ -46,6 +46,7 @@ OUT=""
 JOBS=""
 REBUILD_IMAGE=0
 CLEAN=0
+CHECK=0
 
 usage() {
 	# The header comment block, up to the first non-comment line.
@@ -68,6 +69,9 @@ Options:
   --out PATH       where to write the finished binary
                    (default: ralim/dist/op-reth-<triple>)
   --jobs N         cargo build jobs (default: container default)
+  --check          cargo check instead of cargo build: finds musl source errors
+                   in minutes instead of at the end of a full build, and skips
+                   the link and the static-binary check
   --rebuild-image  rebuild the builder image even if it already exists
   --clean          delete this build's cache volumes, then exit
   -h, --help       this text
@@ -88,6 +92,7 @@ while [ $# -gt 0 ]; do
 	--ca-cert) CA_CERT="$2"; shift 2 ;;
 	--out) OUT="$2"; shift 2 ;;
 	--jobs) JOBS="$2"; shift 2 ;;
+	--check) CHECK=1; shift ;;
 	--rebuild-image) REBUILD_IMAGE=1; shift ;;
 	--clean) CLEAN=1; shift ;;
 	-h | --help) usage; exit 0 ;;
@@ -264,6 +269,7 @@ RUN_ARGS=(
 	-e "HOST_UID=$(id -u)"
 	-e "HOST_GID=$(id -g)"
 	-e "OUT_NAME=$OUT_NAME"
+	-e "CHECK=$CHECK"
 )
 if [ -n "$JOBS" ]; then RUN_ARGS+=(-e "CARGO_BUILD_JOBS=$JOBS"); fi
 # jemalloc bakes in the page size; aarch64 kernels may use 64K pages and a
@@ -295,6 +301,14 @@ trap cleanup_container EXIT INT TERM
 		[ -n "$RUSTUP_TOOLCHAIN" ] || { echo "no toolchain in the builder image" >&2; exit 1; }
 		echo "==> toolchain $RUSTUP_TOOLCHAIN, host $(rustc -vV | sed -n "s/^host: //p")"
 
+		if [ "$CHECK" = 1 ]; then
+			cargo check --locked --bin op-reth \
+				--manifest-path /src/rust/op-reth/bin/Cargo.toml \
+				--target "$TRIPLE" --profile "$PROFILE" "$@"
+			echo "==> check passed; rerun without --check to produce a binary"
+			exit 0
+		fi
+
 		cargo build --locked --bin op-reth \
 			--manifest-path /src/rust/op-reth/bin/Cargo.toml \
 			--target "$TRIPLE" --profile "$PROFILE" "$@"
@@ -316,6 +330,8 @@ trap cleanup_container EXIT INT TERM
 		chown "$HOST_UID:$HOST_GID" "/out/$OUT_NAME" 2>/dev/null || true
 		chown -R "$HOST_UID:$HOST_GID" /src/rust/op-reth/crates/chainspec/res 2>/dev/null || true
 	' _ "$TRIPLE" "$PROFILE" "$PROFILE_DIR" ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}
+
+if [ "$CHECK" = 1 ]; then exit 0; fi
 
 echo
 echo "==> $OUT_DIR/$OUT_NAME"

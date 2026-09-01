@@ -1,0 +1,57 @@
+# VENDORED — do not edit by hand beyond the `ralim:` marked lines.
+#
+# A copy of reth-tasks from the base tag's pinned reth (see rust/Cargo.toml),
+# carrying one change: the SCHED_IDLE `sched_param` initializer builds on musl
+# as well as glibc, so this fork can produce a static binary. Upstream reth does
+# not support musl targets. Wired in by the `[patch]` section of
+# rust/Cargo.toml. Re-vendor on a reth bump with
+# ./ralim/vendor-reth-crate.sh reth-tasks — see ralim/README.md.
+
+[package]
+name = "reth-tasks"
+# Must equal the upstream crate version, or `[patch]` in rust/Cargo.toml is rejected.
+version = "2.3.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Task management"
+
+[lints]
+workspace = true
+
+[dependencies]
+# async
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread"] }
+tracing-futures.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+
+# metrics
+reth-metrics.workspace = true
+metrics.workspace = true
+
+# misc
+dashmap.workspace = true
+parking_lot.workspace = true
+thread-priority.workspace = true
+# ralim: reth's workspace pins tracing with the `attributes` feature and this crate
+# uses #[tracing::instrument]; ours does not, so ask for it here rather than relying
+# on another crate in the graph to unify it in.
+tracing = { workspace = true, features = ["attributes"] }
+thiserror.workspace = true
+
+# feature `rayon`
+rayon = { workspace = true, optional = true }
+crossbeam-utils = { workspace = true, optional = true }
+pin-project = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "time", "macros"] }
+
+[features]
+rayon = ["dep:rayon", "dep:crossbeam-utils", "pin-project"]
+test-utils = []

@@ -73,6 +73,35 @@ One thing op-reth does *not* drag in, which helps: no OpenSSL. Nothing in
 `op-reth`'s crate graph depends on `openssl-sys`, so there is no vendored-OpenSSL
 step to fight.
 
+## The source patch this needs
+
+Getting the toolchain right is not sufficient: **upstream reth does not compile
+for musl.** `reth-tasks` initializes `libc::sched_param` with only
+`sched_priority`, which is glibc's entire struct but not musl's — musl also
+carries the POSIX sporadic-server fields — so the build dies with:
+
+```
+error[E0063]: missing fields `sched_ss_init_budget`, `sched_ss_low_priority`,
+`sched_ss_max_repl` and 1 other field in initializer of `sched_param`
+  --> .../reth/crates/tasks/src/utils.rs:92:25
+```
+
+Upstream `main` still has this, so no base-tag bump fixes it. The fork therefore
+vendors `reth-tasks` alongside `reth-downloaders` and zeroes the struct instead,
+which is what glibc's one-field literal amounted to; see
+[README](README.md#the-musl-fix-in-rustralimvendorreth-tasks). That copy has to
+be re-vendored on every reth pin move, which is the recurring cost of static
+builds here.
+
+`libc::` struct literals are the pattern to watch for — a sweep of reth's
+`crates/` finds exactly one, and none in op-reth's own crates, so this is
+plausibly the only such patch needed. If a new one turns up, `--check` finds it
+in minutes instead of at the end of a full build:
+
+```bash
+./ralim/build-static-opreth.sh --check
+```
+
 ## What the script does
 
 1. Reads the pinned toolchain channel out of `rust/rust-toolchain.toml`, so the

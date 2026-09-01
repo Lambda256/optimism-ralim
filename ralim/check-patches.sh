@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # package name -> path its manifest must live under, relative to the repo root
-PATCHED_CRATES="reth-downloaders:rust/ralim/vendor/reth-downloaders"
+PATCHED_CRATES="reth-downloaders:rust/ralim/vendor/reth-downloaders reth-tasks:rust/ralim/vendor/reth-tasks"
 
 cargo_cmd() {
 	if command -v cargo >/dev/null 2>&1; then

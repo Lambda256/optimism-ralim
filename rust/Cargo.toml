@@ -68,9 +68,11 @@ members = [
   # In-test OP execution layer for op-e2e/actions parity
   "op-reth-test-engine/",
 
-  # ralim (Lambda256 fork): P2P download rate limiting. See ralim/README.md.
+  # ralim (Lambda256 fork): P2P download rate limiting and the musl fix that lets
+  # ./ralim/build-static-opreth.sh produce a static binary. See ralim/README.md.
   "ralim/p2p-ratelimit/",
   "ralim/vendor/reth-downloaders/",
+  "ralim/vendor/reth-tasks/",
 ]
 default-members = [
   "kona/bin/host",
@@ -639,6 +641,9 @@ chrono = "0.4.43"
 clap = "4.5.58"
 color-eyre = "0.6.5"
 crossbeam-channel = "0.5.13"
+# ralim: the vendored reth-tasks' manifest expects these two; versions match
+# reth's own workspace pins.
+crossbeam-utils = "0.8"
 crossterm = "0.29.0"
 dashmap = "6.1"
 derive_more = { version = "2.1.1", default-features = false, features = [
@@ -700,6 +705,9 @@ syn = "2.0"
 tabled = { version = "0.20.0", default-features = false }
 tar = "0.4.44"
 thiserror = { version = "2.0.18", default-features = false }
+# ralim: the vendored reth-tasks' manifest expects this; version matches reth's
+# own workspace pin.
+thread-priority = "3.0.0"
 unsigned-varint = "0.8.0"
 url = { version = "2.5.8", default-features = false }
 vergen = "9.1.0"
@@ -724,3 +732,6 @@ rocksdb = { version = "0.24.0", default-features = false }
 # disappears. ./ralim/check-patches.sh asserts it is active.
 [patch."https://github.com/paradigmxyz/reth"]
 reth-downloaders = { path = "ralim/vendor/reth-downloaders" }
+# reth-tasks: one initializer that upstream writes glibc-only, which blocks every
+# musl target. See ralim/STATIC-BUILD.md.
+reth-tasks = { path = "ralim/vendor/reth-tasks" }

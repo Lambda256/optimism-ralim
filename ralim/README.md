@@ -46,8 +46,8 @@ to be there:
 | File | Why |
 | ---- | --- |
 | `AGENTS.md` | The fork notice at the top; `CLAUDE.md` symlinks to it. Agents must see the policy before touching git. |
-| `rust/Cargo.toml` | Workspace members, three `reth-*` dependency entries the vendored crate needs, and the `[patch]` that wires the rate limiter in. |
-| `rust/rustfmt.toml` | `ignore = ["ralim/vendor"]`, so our formatter leaves the vendored upstream crate byte-identical. |
+| `rust/Cargo.toml` | Workspace members, the dependency entries the vendored crates' manifests expect, and the two `[patch]` entries (rate limiter, musl fix). |
+| `rust/rustfmt.toml` | `ignore = ["ralim/vendor"]`, so our formatter leaves the vendored upstream crates byte-identical. |
 | `rust/op-reth/crates/node/src/args.rs` | The `--rollup.download-rate-limit-mbps` flag on `RollupArgs`, which is where op-reth's CLI is defined. |
 | `rust/op-reth/crates/node/src/proof_history.rs` | Installs the limiter in `launch_node`, before the node builds its pipeline. |
 | `rust/op-reth/crates/node/Cargo.toml` | The dependency for the two files above. |
@@ -167,19 +167,26 @@ The `pre-push` hook runs it whenever a push touches `rust/Cargo.toml` or
 
 ### After a tag bump that moves the reth pin
 
-The vendored copy must match the reth version the rest of the workspace builds
-against:
+Every vendored copy must match the reth version the rest of the workspace builds
+against — `./ralim/vendor-reth-crate.sh --list` names them:
 
 ```bash
-./ralim/vendor-reth-downloaders.sh     # re-vendor from the new pin, re-apply the patch
+./ralim/vendor-reth-crate.sh reth-downloaders   # re-vendor from the new pin, re-apply the patch
+./ralim/vendor-reth-crate.sh reth-tasks
 ./ralim/check-patches.sh
-cd rust && cargo check -p reth-downloaders -p reth-optimism-node
+cd rust && cargo check -p reth-downloaders -p reth-tasks -p reth-optimism-node
 ```
 
 The script reads the pin (URL plus tag or rev) straight out of `rust/Cargo.toml`,
-so it follows the base tag automatically. If the patch stops applying, resolve
-the `.rej` files and record the result with
-`./ralim/vendor-reth-downloaders.sh --save-patch`.
+so it follows the base tag automatically. If a patch stops applying, resolve the
+`.rej` files and record the result with
+`./ralim/vendor-reth-crate.sh <crate> --save-patch`.
+
+Watch for one failure mode that is not a conflict: a vendored crate's manifest
+inherits `.workspace = true` from *reth's* workspace, not ours, so a feature reth
+enables and we do not shows up as a compile error in the vendored copy rather
+than a patch rejection. `reth-tasks` needed `tracing = { workspace = true,
+features = ["attributes"] }` for exactly this reason.
 
 ## Syncing the mirror
 
@@ -225,6 +232,19 @@ None of this is enforceable on GitHub's side: a fork can always open a PR to its
 parent through the web UI, and only GitHub Support can detach a fork from its
 parent. Treat the layers above as guardrails against accident, and the policy in
 this file as the actual rule.
+
+## The musl fix in `rust/ralim/vendor/reth-tasks`
+
+Upstream reth does not support musl targets. `reth-tasks` initializes
+`libc::sched_param` with only `sched_priority`, which is glibc's whole struct but
+not musl's — musl also carries the POSIX sporadic-server fields, so the literal
+fails to compile and takes every musl build of op-reth down with it. Upstream
+`main` still has it, so no tag bump fixes this.
+
+The vendored copy zeroes the struct instead, which is what glibc's one-field
+literal amounted to. That is the entire change; it is the price of
+[static builds](STATIC-BUILD.md), and it has to be re-vendored on every reth pin
+move like the rate limiter does.
 
 ## Static `op-reth` builds
 
