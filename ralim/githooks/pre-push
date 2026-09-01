@@ -1,0 +1,29 @@
+#!/bin/sh
+# Fork-owned pre-push hook. `core.hooksPath` points here (see setup-clone.sh)
+# rather than at upstream's .githooks/, so that the fork guard lives entirely in
+# fork-owned files and the ralim patch stack stays portable across base tags —
+# older tags may not have .githooks/ at all.
+#
+# git passes the remote name as $1 and its URL as $2; the pushed refs arrive on
+# stdin, which is handed untouched to upstream's hook below.
+
+repo=$(git rev-parse --show-toplevel)
+
+# --- fork guard ------------------------------------------------------------
+# This clone is Lambda256/optimism-ralim and must never push to (and therefore
+# never open a PR against) ethereum-optimism/optimism. See ralim/README.md.
+case "${1-} ${2-}" in
+  upstream\ * | *ethereum-optimism/*)
+    echo "pre-push: refusing to push to '${1-}' (${2-})." >&2
+    echo "  This fork never pushes to ethereum-optimism/optimism; push to 'origin' instead." >&2
+    echo "  See ralim/README.md." >&2
+    exit 1
+    ;;
+esac
+
+# --- upstream's own hook ---------------------------------------------------
+# Whatever the base tag ships (currently a Rust fmt gate). exec keeps stdin, so
+# it still sees the pushed refs. Absent on older tags, in which case we are done.
+if [ -x "$repo/.githooks/pre-push" ]; then
+  exec "$repo/.githooks/pre-push" "$@"
+fi

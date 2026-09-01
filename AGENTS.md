@@ -1,5 +1,16 @@
 # Optimism Monorepo
 
+> **This is Lambda256's `optimism-ralim` fork, not upstream.** The default branch
+> is `ralim`: an upstream release tag (currently `op-reth/v2.3.3`) plus Lambda256
+> patches, moved forward only by rebasing onto a newer tag — never by merging
+> `develop`, which is a read-only mirror of `upstream/develop`. Never push to or
+> open a pull request against `ethereum-optimism/optimism`; every PR targets
+> `Lambda256/optimism-ralim` with base branch `ralim`. Keep new code in
+> fork-owned files (`ralim/`) where practical — every upstream file a patch
+> touches conflicts on the next tag bump. Read [ralim/README.md](ralim/README.md)
+> before any git or `gh` work here; the rest of this file is upstream's and
+> describes upstream's workflow (where it says `develop`, read `ralim`).
+
 This is the primary monorepo for the OP Stack, maintained by the Optimism Collective. The OP Stack is a decentralized software stack that powers Optimism and forms the backbone of blockchains like OP Mainnet and Base.
 
 ## Improving This Documentation
