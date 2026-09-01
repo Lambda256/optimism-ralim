@@ -226,6 +226,22 @@ parent through the web UI, and only GitHub Support can detach a fork from its
 parent. Treat the layers above as guardrails against accident, and the policy in
 this file as the actual rule.
 
+## Static `op-reth` builds
+
+```bash
+./ralim/build-static-opreth.sh     # → ralim/dist/op-reth-x86_64-unknown-linux-musl
+```
+
+Cross-compiles `op-reth` to musl inside a container, so the result has no
+`PT_INTERP` at all and runs on a Rocky Linux host whatever its glibc, with no
+container runtime. The build host needs only docker or podman. Run it *on* the
+x86_64 target box and the builder is native there — no emulation.
+
+[`STATIC-BUILD.md`](STATIC-BUILD.md) covers why "static" has to mean musl, why
+the build host has to be glibc even though the output is musl (bindgen `dlopen`s
+libclang from a build script), why Rocky cannot supply the toolchain itself, and
+what changes at run time (musl's resolver, ulimits).
+
 ## Setup, once per clone
 
 ```bash
