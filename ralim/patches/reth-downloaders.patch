@@ -1,0 +1,91 @@
+diff -ruN --exclude=target pristine/Cargo.toml /Users/jimmy/git/optimism-ralim/rust/ralim/vendor/reth-downloaders/Cargo.toml
+--- a/Cargo.toml	2026-09-01 17:47:59
++++ b/Cargo.toml	2026-09-01 17:36:17
+@@ -1,6 +1,15 @@
++# VENDORED — do not edit by hand beyond the `ralim:` marked lines.
++#
++# A copy of reth-downloaders from the base tag's pinned reth (see
++# rust/Cargo.toml), carrying one change: the header and body downloader builders
++# wrap their client in ralim-p2p-ratelimit's RateLimitedClient. It is wired in by
++# the `[patch]` section of rust/Cargo.toml. Re-vendor on a reth bump with
++# ./ralim/vendor-reth-downloaders.sh — see ralim/README.md.
++
+ [package]
+ name = "reth-downloaders"
+-version.workspace = true
++# Must equal the upstream crate version, or `[patch]` in rust/Cargo.toml is rejected.
++version = "2.3.0"
+ edition.workspace = true
+ rust-version.workspace = true
+ license.workspace = true
+@@ -8,10 +17,10 @@
+ repository.workspace = true
+ description = "Implementations of various block downloaders"
+ 
+-[lints]
+-workspace = true
+-
+ [dependencies]
++# ralim: the global P2P download rate limiter this copy wires in
++ralim-p2p-ratelimit.workspace = true
++
+ # reth
+ reth-config.workspace = true
+ reth-consensus.workspace = true
+diff -ruN --exclude=target pristine/src/bodies/bodies.rs /Users/jimmy/git/optimism-ralim/rust/ralim/vendor/reth-downloaders/src/bodies/bodies.rs
+--- a/src/bodies/bodies.rs
++++ b/src/bodies/bodies.rs
+@@ -1,4 +1,5 @@
+ use super::queue::BodiesRequestQueue;
++use ralim_p2p_ratelimit::RateLimitedClient;
+ use crate::{bodies::task::TaskDownloader, metrics::BodyDownloaderMetrics};
+ use alloy_consensus::BlockHeader;
+ use alloy_primitives::BlockNumber;
+@@ -573,7 +574,7 @@
+         client: C,
+         consensus: Arc<dyn Consensus<B>>,
+         provider: Provider,
+-    ) -> BodiesDownloader<B, C, Provider>
++    ) -> BodiesDownloader<B, RateLimitedClient<C>, Provider>
+     where
+         B: Block,
+         C: BodiesClient<Body = B::Body> + 'static,
+@@ -588,7 +589,8 @@
+         let metrics = BodyDownloaderMetrics::default();
+         let in_progress_queue = BodiesRequestQueue::new(metrics.clone());
+         BodiesDownloader {
+-            client: Arc::new(client),
++            // ralim: cap the download rate globally (no-op without --rollup.download-rate-limit-mbps).
++            client: Arc::new(RateLimitedClient::new(client)),
+             consensus,
+             provider,
+             request_limit,
+diff -ruN --exclude=target pristine/src/headers/reverse_headers.rs /Users/jimmy/git/optimism-ralim/rust/ralim/vendor/reth-downloaders/src/headers/reverse_headers.rs
+--- a/src/headers/reverse_headers.rs
++++ b/src/headers/reverse_headers.rs
+@@ -1,5 +1,6 @@
+ //! A headers downloader that can handle multiple requests concurrently.
+ 
++use ralim_p2p_ratelimit::RateLimitedClient;
+ use super::task::TaskDownloader;
+ use crate::metrics::HeaderDownloaderMetrics;
+ use alloy_consensus::BlockHeader;
+@@ -1189,7 +1190,7 @@
+         self,
+         client: H,
+         consensus: Arc<dyn HeaderValidator<H::Header>>,
+-    ) -> ReverseHeadersDownloader<H>
++    ) -> ReverseHeadersDownloader<RateLimitedClient<H>>
+     where
+         H: HeadersClient + 'static,
+     {
+@@ -1202,7 +1203,8 @@
+         } = self;
+         ReverseHeadersDownloader {
+             consensus,
+-            client: Arc::new(client),
++            // ralim: cap the download rate globally (no-op without --rollup.download-rate-limit-mbps).
++            client: Arc::new(RateLimitedClient::new(client)),
+             local_head: None,
+             sync_target: None,
+             // Note: we set these to `0` first, they'll be updated once the sync target response is

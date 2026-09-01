@@ -29,6 +29,19 @@ pub async fn launch_node(
     builder: WithLaunchContext<NodeBuilder<DatabaseEnv, OpChainSpec>>,
     args: RollupArgs,
 ) -> eyre::Result<(), ErrReport> {
+    // ralim: install the global P2P download rate limiter before the node builds
+    // its pipeline — that is where the throttled header/body downloaders are
+    // created, and the limiter has to be in place by then.
+    if let Some(bytes_per_sec) = args.download_rate_limit_bytes_per_sec.filter(|rate| *rate > 0) {
+        let limiter = ralim_p2p_ratelimit::init_global(bytes_per_sec);
+        info!(
+            target: "reth::cli",
+            rate_mbps = limiter.megabytes_per_sec(),
+            burst_bytes = limiter.capacity_bytes(),
+            "P2P block download rate limit enabled",
+        );
+    }
+
     if !args.proofs_history {
         let handle = builder.node(OpNode::new(args)).launch_with_debug_capabilities().await?;
         return handle.node_exit_future.await;

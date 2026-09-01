@@ -67,6 +67,10 @@ members = [
 
   # In-test OP execution layer for op-e2e/actions parity
   "op-reth-test-engine/",
+
+  # ralim (Lambda256 fork): P2P download rate limiting. See ralim/README.md.
+  "ralim/p2p-ratelimit/",
+  "ralim/vendor/reth-downloaders/",
 ]
 default-members = [
   "kona/bin/host",
@@ -319,6 +323,7 @@ reth-optimism-storage = { path = "op-reth/crates/storage/" }
 reth-optimism-exex = { path = "op-reth/crates/exex/" }
 reth-optimism-trie = { path = "op-reth/crates/trie/" }
 reth-optimism-txpool = { path = "op-reth/crates/txpool/" }
+ralim-p2p-ratelimit = { path = "ralim/p2p-ratelimit/" }
 
 # ==================== OP-ALLOY INTERNAL CRATES ====================
 op-alloy-consensus = { version = "2.0.0", path = "op-alloy/crates/consensus", default-features = false }
@@ -378,6 +383,9 @@ reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0", default-features = false }
+reth-config = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
@@ -707,3 +715,12 @@ snmalloc-rs = { version = "0.3.8", features = ["build_cc"] }
 
 # K/V database
 rocksdb = { version = "0.24.0", default-features = false }
+
+# ralim (Lambda256 fork) --------------------------------------------------------
+# Redirects reth-downloaders to the vendored copy in ralim/vendor/, which wraps
+# the header and body download clients in a global token-bucket rate limiter.
+# The URL must match the pinned reth source exactly (see the reth-* entries
+# above): if it drifts, cargo silently ignores the patch and the limiter
+# disappears. ./ralim/check-patches.sh asserts it is active.
+[patch."https://github.com/paradigmxyz/reth"]
+reth-downloaders = { path = "ralim/vendor/reth-downloaders" }

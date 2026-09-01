@@ -11,6 +11,9 @@ repository = "https://github.com/paradigmxyz/reth"
 workspace = true
 
 [dependencies]
+# ralim: global P2P download rate limiter, installed from --rollup.download-rate-limit-mbps
+ralim-p2p-ratelimit.workspace = true
+
 # reth
 reth-chainspec.workspace = true
 ## ensure secp256k1 recovery with rayon support is activated

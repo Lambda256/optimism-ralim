@@ -1732,6 +1732,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert_matches"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b34d609dfbaf33d6889b2b7106d3ca345eacad44200913df5ba02bfd31d2ba9"
+
+[[package]]
 name = "async-channel"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10869,6 +10875,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
+name = "ralim-p2p-ratelimit"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "reth-network-p2p",
+ "reth-network-peers",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rancor"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11830,19 +11848,22 @@ dependencies = [
 [[package]]
 name = "reth-downloaders"
 version = "2.3.0"
-source = "git+https://github.com/paradigmxyz/reth?tag=v2.3.0#9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
  "alloy-primitives",
  "alloy-rlp",
+ "assert_matches",
  "async-compression",
  "futures",
  "futures-util",
  "itertools 0.14.0",
  "metrics",
  "pin-project",
+ "ralim-p2p-ratelimit",
+ "rand 0.9.4",
  "rayon",
+ "reth-chainspec",
  "reth-config",
  "reth-consensus",
  "reth-ethereum-primitives",
@@ -11854,6 +11875,7 @@ dependencies = [
  "reth-storage-api",
  "reth-tasks",
  "reth-testing-utils",
+ "reth-tracing",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -13393,6 +13415,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
  "op-revm",
+ "ralim-p2p-ratelimit",
  "reth-chainspec",
  "reth-consensus",
  "reth-db",

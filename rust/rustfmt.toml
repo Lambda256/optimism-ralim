@@ -7,3 +7,9 @@ binop_separator = "Back"
 format_code_in_doc_comments = true
 doc_comment_code_block_width = 100
 format_macro_matchers = true
+
+# ralim: the vendored upstream crate under ralim/vendor/ is kept byte-identical
+# to the reth revision it came from, apart from the patch in
+# ralim/patches/. Reformatting it would show up as re-vendoring noise.
+# (Unstable option: honoured by the pinned nightly the repo formats with.)
+ignore = ["ralim/vendor"]

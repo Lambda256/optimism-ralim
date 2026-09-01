@@ -220,6 +220,48 @@ pub struct RollupArgs {
         default_value_t = 0
     )]
     pub proofs_history_verification_interval: u64,
+
+    /// ralim: cap P2P block download bandwidth, in megabytes per second
+    /// (decimal, 1 MB = 1,000,000 bytes).
+    ///
+    /// Applies a process-global token bucket to the header and body downloads
+    /// the staged pipeline performs over devp2p — the path a node uses when it
+    /// is far enough behind to backfill. Unset (or 0) leaves the download
+    /// unbounded, which is upstream's behaviour.
+    ///
+    /// The cap is on RLP-encoded response bytes, measured before RLPx's snappy
+    /// compression, so actual socket throughput is somewhat lower than the
+    /// number given here. Burst is one second of traffic (at least 8 MiB).
+    ///
+    /// Note this throttles catch-up itself: a node that is behind stays behind
+    /// longer. It is a knob for bounding bandwidth cost, not for going faster.
+    // Stored in bytes per second rather than MB/s: `RollupArgs` derives `Eq`,
+    // which `f64` does not implement, and an exact integer of bytes is the
+    // unambiguous unit to hand the limiter anyway.
+    #[arg(
+        long = "rollup.download-rate-limit-mbps",
+        value_name = "MEGABYTES_PER_SEC",
+        value_parser = parse_download_rate_limit
+    )]
+    pub download_rate_limit_bytes_per_sec: Option<u64>,
+}
+
+/// Parses `--rollup.download-rate-limit-mbps` into bytes per second.
+///
+/// Fractional megabytes are accepted (`0.5` = 500,000 B/s). `0` is accepted and
+/// means unlimited, matching "flag not given", so an operator can disable the
+/// limit in a config template without deleting the line. Negative and
+/// non-finite values are rejected rather than silently clamped.
+fn parse_download_rate_limit(value: &str) -> Result<u64, String> {
+    const BYTES_PER_MEGABYTE: f64 = 1_000_000.0;
+
+    let mbps: f64 = value.parse().map_err(|_| format!("not a number: {value}"))?;
+    if !mbps.is_finite() || mbps < 0.0 {
+        return Err(format!("must be a finite, non-negative number of MB/s: {value}"));
+    }
+    // Round rather than truncate so a rate below one byte per second still ends
+    // up unlimited-by-zero instead of an unexpected 1 B/s crawl.
+    Ok((mbps * BYTES_PER_MEGABYTE).round() as u64)
 }
 
 impl Default for RollupArgs {
@@ -246,6 +288,7 @@ impl Default for RollupArgs {
             },
             proofs_history_window: ProofsHistoryWindowArg::default(),
             proofs_history_verification_interval: 0,
+            download_rate_limit_bytes_per_sec: None,
         }
     }
 }
@@ -260,6 +303,46 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
+    }
+
+    #[test]
+    fn parses_download_rate_limit_into_bytes_per_sec() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.download-rate-limit-mbps",
+            "1.5",
+        ])
+        .args;
+        assert_eq!(args.download_rate_limit_bytes_per_sec, Some(1_500_000));
+    }
+
+    #[test]
+    fn download_rate_limit_defaults_to_unset() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.download_rate_limit_bytes_per_sec, None);
+    }
+
+    #[test]
+    fn download_rate_limit_zero_is_accepted_as_unlimited() {
+        // A config template can keep the line and disable the limit with 0;
+        // launch treats Some(0) the same as None.
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.download-rate-limit-mbps=0",
+        ])
+        .args;
+        assert_eq!(args.download_rate_limit_bytes_per_sec, Some(0));
+    }
+
+    #[test]
+    fn download_rate_limit_rejects_negative_and_garbage() {
+        for value in ["-1", "nan", "inf", "fast"] {
+            let parsed = CommandParser::<RollupArgs>::try_parse_from([
+                "reth",
+                &format!("--rollup.download-rate-limit-mbps={value}"),
+            ]);
+            assert!(parsed.is_err(), "{value} should have been rejected");
+        }
     }
 
     #[test]

@@ -38,9 +38,19 @@ happen deliberately, one tag at a time, with the patch stack replayed on top.
 The corollary: **keep the patch stack out of upstream-owned files.** Every
 upstream file a patch touches is a conflict waiting for the next tag bump — and
 files can be missing entirely on another tag (`.githooks/` did not exist at
-`op-reth/v2.3.3`). Fork-owned files live in `ralim/`. Right now the stack touches
-exactly one upstream file: a notice at the top of `AGENTS.md` (`CLAUDE.md`
-symlinks to it), which agents must see before they touch git.
+`op-reth/v2.3.3`). Fork-owned code lives in `ralim/` and `rust/ralim/`.
+
+What the stack currently touches outside those directories, and why each one has
+to be there:
+
+| File | Why |
+| ---- | --- |
+| `AGENTS.md` | The fork notice at the top; `CLAUDE.md` symlinks to it. Agents must see the policy before touching git. |
+| `rust/Cargo.toml` | Workspace members, three `reth-*` dependency entries the vendored crate needs, and the `[patch]` that wires the rate limiter in. |
+| `rust/rustfmt.toml` | `ignore = ["ralim/vendor"]`, so our formatter leaves the vendored upstream crate byte-identical. |
+| `rust/op-reth/crates/node/src/args.rs` | The `--rollup.download-rate-limit-mbps` flag on `RollupArgs`, which is where op-reth's CLI is defined. |
+| `rust/op-reth/crates/node/src/proof_history.rs` | Installs the limiter in `launch_node`, before the node builds its pipeline. |
+| `rust/op-reth/crates/node/Cargo.toml` | The dependency for the two files above. |
 
 ## Moving to a new tag
 
@@ -72,6 +82,104 @@ workspace takes many minutes:
 
 A rebase rewrites history, so `ralim` is force-pushed. Teammates recover with
 `git fetch origin && git rebase origin/ralim`.
+
+If the new tag moves the pinned reth revision, re-vendor afterwards — see
+[After a tag bump that moves the reth pin](#after-a-tag-bump-that-moves-the-reth-pin).
+
+## P2P download rate limiting
+
+`--rollup.download-rate-limit-mbps <MEGABYTES_PER_SEC>` caps how fast op-reth
+pulls block data over devp2p. Unset, or `0`, leaves it unbounded — upstream's
+behaviour.
+
+```bash
+op-reth node --rollup.download-rate-limit-mbps 20     # ~20 MB/s
+op-reth node --rollup.download-rate-limit-mbps 2.5    # fractional is fine
+```
+
+Details worth knowing before you set it:
+
+- **Global, not per peer.** One token bucket for the whole process, shared by the
+  header and body downloaders and every peer they fan out to. The knob is a cap
+  on what this host pulls, so that is the unit that makes sense.
+- **Decimal megabytes** — 1 MB/s = 1,000,000 bytes/s. Internally the flag is
+  stored as bytes per second (`RollupArgs` derives `Eq`, which `f64` does not
+  implement).
+- **RLP bytes, pre-compression.** Charging uses the RLP-encoded size of each
+  response, measured before RLPx applies snappy, so real socket throughput ends
+  up somewhat *below* the number you set.
+- **Burst is one second of traffic**, floored at 8 MiB so a single large bodies
+  response is never bigger than the bucket.
+- **It throttles catch-up itself.** A node that is behind stays behind longer.
+  This is a knob for bounding bandwidth cost, not for syncing faster.
+
+### What it does and does not cover
+
+reth hands one `FetchClient` to two consumers
+(`reth-node-builder`'s `launch/engine.rs`):
+
+| Consumer | Used when | Limited? |
+| -------- | --------- | -------- |
+| Staged pipeline (`reth-downloaders`) | Backfill — the node is far enough behind to run the pipeline | **Yes** |
+| Engine block downloader | Live sync filling a small gap | No |
+| Transaction gossip | Always | No |
+
+So this covers the case it was built for — a backlogged chain catching up — and
+not the engine's live gap fills. Covering those too means wrapping the client in
+`launch/engine.rs`, which would mean vendoring `reth-node-builder` (7,700 lines)
+instead of `reth-downloaders` (5,400).
+
+Nothing here touches op-node: its P2P is gossip plus a req/resp *server*, and the
+req/resp sync client was removed upstream, so op-node is not on the catch-up
+download path at all.
+
+### How it is wired in
+
+The limiter itself is a fork-owned crate,
+[`rust/ralim/p2p-ratelimit`](../rust/ralim/p2p-ratelimit): a token bucket, a
+process-global `OnceLock`, and `RateLimitedClient`, a decorator over reth's
+`HeadersClient`/`BodiesClient` that charges each response and waits out the
+deficit.
+
+Applying it needs a change inside upstream code, because reth builds the
+downloaders itself and exposes no hook. That change is kept as small as possible:
+
+1. [`rust/ralim/vendor/reth-downloaders`](../rust/ralim/vendor/reth-downloaders)
+   is a copy of the crate at the reth revision the base tag pins, carrying a
+   91-line diff — the two downloader builders wrap their client in
+   `RateLimitedClient`, plus manifest edits. The diff is the source of truth and
+   lives in [`ralim/patches/reth-downloaders.patch`](patches/reth-downloaders.patch).
+2. `[patch."<reth url>"]` in `rust/Cargo.toml` redirects every dependent —
+   including upstream's own `reth-node-builder` — to that copy.
+
+**The failure mode to know about:** if the `[patch]` key stops matching the
+pinned reth source URL, cargo does not error. It prints `Patch ... was not used
+in the crate graph` and builds against the unpatched upstream crate, and the rate
+limiter silently disappears. A base-tag change can do exactly that — the URL is
+`paradigmxyz/reth` at `op-reth/v2.3.3` but `op-rs/reth` on `develop`. So:
+
+```bash
+./ralim/check-patches.sh     # asserts the patch is live in the crate graph
+```
+
+The `pre-push` hook runs it whenever a push touches `rust/Cargo.toml` or
+`rust/ralim/`.
+
+### After a tag bump that moves the reth pin
+
+The vendored copy must match the reth version the rest of the workspace builds
+against:
+
+```bash
+./ralim/vendor-reth-downloaders.sh     # re-vendor from the new pin, re-apply the patch
+./ralim/check-patches.sh
+cd rust && cargo check -p reth-downloaders -p reth-optimism-node
+```
+
+The script reads the pin (URL plus tag or rev) straight out of `rust/Cargo.toml`,
+so it follows the base tag automatically. If the patch stops applying, resolve
+the `.rej` files and record the result with
+`./ralim/vendor-reth-downloaders.sh --save-patch`.
 
 ## Syncing the mirror
 
